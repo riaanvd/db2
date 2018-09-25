@@ -1,0 +1,81 @@
+#!/bin/ksh
+# This script deploys the DB2 database scripts for a release
+# usage : ReleaseControl.sh <DBNAME> <VERSION>
+#
+#
+#=============================================================================================
+
+clear
+
+if [ $# -lt 1 ]
+then
+    echo "ERROR : Not enough parameters."
+    echo "Usage : $0 <DBNAME>"
+    exit 1
+fi
+
+echo Load DB2 Profile...
+. ~/sqllib/db2profile
+RETCODE=$?
+if [ "$RETCODE" -ne 0 ]
+then
+    echo "Could not load db2 profile"
+    exit 1
+fi
+
+echo "Force connections from database"
+
+if [ "$#" -lt 1 ]
+then
+    echo "Usage : $0 <DBNAME>"
+    exit 1
+fi
+
+DBNAME=$1
+DBNAME=`echo $DBNAME |tr [a-z] [A-Z]`
+HOSTNAME=`hostname -s`
+HOSTNAME=`echo $HOSTNAME |tr [A-Z] [a-z]`
+
+TMSTAMP=`date +%Y%m%d_%H%M`
+SCRIPTOUT=/tmp/${HOSTNAME}_${DBNAME}_force.out 
+SCRIPTLOG=/tmp/${HOSTNAME}_${DBNAME}_force.log
+
+DB2SQL_CONNECTIONS="select 'force applications ('''||rtrim(char(agent_id))||''');'
+                    from sysibmadm.applications 
+                    where appl_id not like '%LOCAL.DB2.%'"
+
+ 
+echo Log written to : $SCRIPTLOG
+ 
+echo DBNAME= $DBNAME
+
+db2 deactivate database $DBNAME >>$SCRIPTLOG 2>&1
+
+db2 list applications |grep -i $DBNAME | wc -l |read COUNT_CONNECTIONS
+
+if [ "$COUNT_CONNECTIONS" -gt 0 ]
+then
+    echo "There are currently $COUNT_CONNECTIONS USER connections to the database."
+    db2 list applications |grep -i $DBNAME
+    db2 connect to $DBNAME >> $SCRIPTLOG
+    if [ "$?" -ne 0 ]
+    then
+         echo "Cant connect to database : $DBNAME" >> $SCRIPTLOG
+         exit 2
+    else
+        echo "Connected to database : $DBNAME"    >> $SCRIPTLOG
+    fi
+    echo "connect to $DBNAME ;" >$SCRIPTOUT
+    db2 -x $DB2SQL_CONNECTIONS > $SCRIPTOUT
+    db2 connect reset
+    cat $SCRIPTOUT
+    db2 -tvf $SCRIPTOUT |tee -a $SCRIPTLOG    #Kill connections to database
+    echo "Remaining connections"
+    echo "====================="
+    db2 list applications |grep -i $DBNAME
+    echo "====================="
+else
+    echo "No active connections exists..."
+fi 
+ 
+exit 0 
